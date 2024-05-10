@@ -1,211 +1,114 @@
 import os
-import time
+
 import ntpath
-import moviepy.editor as mpy
-import os
-import glob
-import ntpath
-import pandas as pd
-from datetime import datetime
-from dateutil import tz
 import numpy as np
+import matplotlib.pyplot as plt
+import cartopy.io.shapereader as shpreader
 
-import xarray as xr
-import numpy as np
-import geopandas as gp
-import pandas as pd
-import PseudoNetCDF as pnc
+import datetime
+from datetime import timedelta, timezone
 
-import metpy.calc as metpcalc
-from metpy.units import units
+import shutil
+import rasterio
 
-from shapely.geometry import Polygon
 import matplotlib
 import matplotlib.pyplot as plt
-from matplotlib import colors
-from mpl_toolkits.basemap import Basemap
-from descartes import PolygonPatch
-from matplotlib.collections import PatchCollection
+
+#from mpl_toolkits.basemap import Basemap
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
-from matplotlib.collections import LineCollection
 import matplotlib.cm as cm
 
+import matplotlib.ticker as mticker
+import cartopy.crs as ccrs
+from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
+
 from windmap_streamline import Streamlines
-
-def path_leaf(path):
-    head, tail = ntpath.split(path)
-    return tail or ntpath.basename(head)
+from matplotlib.collections import LineCollection
 
 
+def textplacer(axname,da_plt,pos_var,textstring,fontsize,horizontalalignment):
+    """
+    Places text over a plot
 
-def foldercreator(path):
-   if not os.path.exists(path):
-        os.makedirs(path)
+    Parameters
+    ----------
+    axname : string
+    da_plt : variable
+        matplotlib.pyplot as plt , da_plt = plt
+    pos_var : dict
+        containing x,y,width,height
+    textstring : string
+        text to be placed
+    fontsize : int
+    horizontalallignment : string
+    left, right and center
+    
+    
+    """
+    xpos,ypos,width,height=pos_var['x'],pos_var['y'],pos_var['width'],pos_var['height']
+    axname=da_plt.axes([xpos,ypos,width,height], frame_on=False,zorder=0) 
+    axname.xaxis.set_ticks_position('none')
+    axname.yaxis.set_ticks_position('none') 
+    axname.set_xticklabels('')
+    axname.set_yticklabels('')
+    plt.text(0.5, 0.5,textstring, horizontalalignment=horizontalalignment,fontsize=fontsize,fontweight='bold',color='k', verticalalignment='center', transform =axname.transAxes)
 
-
-
-def filepath_provider(path):
-    filepath=os.path.dirname(path)+'/'
-    return filepath
-
-
-def make_ist_time(nctime):
-    ocdate=datetime.strptime(np.datetime_as_string(nctime, unit='m'), '%Y-%m-%dT%H:%M')
-    from_zone = tz.gettz('UTC')
-    to_zone = tz.gettz('India/Kolkata') 
-    utc_ocdate = ocdate.replace(tzinfo=from_zone)
-    # Convert time zone
-    ist_ocdate = utc_ocdate.astimezone(to_zone)
-    return ist_ocdate.strftime('%Y-%m-%dT%H:%M')    
-
-def make_ist_time_video(nctime):
-    ocdate=datetime.strptime(np.datetime_as_string(nctime, unit='m'), '%Y-%m-%dT%H:%M')
-    from_zone = tz.gettz('UTC')
-    to_zone = tz.gettz('India/Kolkata') 
-    utc_ocdate = ocdate.replace(tzinfo=from_zone)
-    # Convert time zone
-    ist_ocdate = utc_ocdate.astimezone(to_zone)
-    return ist_ocdate.strftime('%Y%m%d')    
-
-
-
-def videomaker(pngdir, chosenfps,outputformat,outfilename):
-    pngfiles=glob.glob(pngdir+'*.png')
-    db=pd.DataFrame(pngfiles)
-    db.columns=['fullpath']
-    db['filename']=db['fullpath'].map(path_leaf)
-    db['filenumber'] =db['filename'].apply(lambda x: x.split('.')[0])
-    db['filenumber'] = db['filenumber'].astype(float)
-    db1=db.sort_values('filenumber')
-    sortedfilename=db1['fullpath'].tolist()
-    output_base_name=pngdir+outfilename+'.'+outputformat
-    clipdur=[1]*len(sortedfilename)
-    clip = mpy.ImageSequenceClip(sortedfilename, durations=clipdur, load_images=True)
-    if outputformat=='mp4':
-       clip.write_videofile(output_base_name,audio=False,fps=chosenfps )
-    else:
-       clip.write_gif(output_base_name,program='ImageMagick',opt='optimizeplus',fuzz=1,fps=chosenfps )
-
-
-def cf_standardizer(inncfile):
-    outputfile='cf_'+path_leaf(inncfile)
-    path_outputfile=filepath_provider(inncfile)+outputfile
-    infile = pnc.pncopen(inncfile, addcf=True)
-    infile.save(path_outputfile)
-
-def citybound(dataframe,citycode):
-    dataframe[['minx', 'miny', 'maxx', 'maxy']]=dataframe.geometry.bounds
-    dataframe1=dataframe[dataframe['code']==citycode]
-    dataframe2=dataframe1.reset_index()
-    return dataframe2
-
-
-def for_tempextract(ncfile,timestep):
-    DS = xr.open_dataset(ncfile)
-    da = DS.T2_K
-    da2=da.isel(TSTEP=[timestep])
-    pdata=da2.values
-    pdata1=pdata[0,0,:,:]
-    air_pdata = pdata1 - 273.15
-    nctime=nctime=DS.time[timestep].values
-    return air_pdata,nctime
-
-def make_ncfiles_fortest():
-   # Define the geographic boundaries
-    latitude_bounds = (24, -11)  # North 24°, South -11°
-    longitude_bounds = (-19, 53)  # West 19°, East 53°
-
-# Generate latitude and longitude arrays
-    latitudes = np.linspace(latitude_bounds[0], latitude_bounds[1], 100)
-    longitudes = np.linspace(longitude_bounds[0], longitude_bounds[1], 100)
-
-# Create a meshgrid for latitudes and longitudes
-    lon, lat = np.meshgrid(longitudes, latitudes)
-
-# Generate sample data for U10_MpS and V10_MpS
-# Assuming simple sinusoidal variations for demonstration
-    U10_MpS = np.sin(np.pi * lat / 180) * np.cos(np.pi * lon / 180)
-    V10_MpS = np.cos(np.pi * lat / 180) * np.sin(np.pi * lon / 180)
-
-# Create an xarray Dataset
-    data = xr.Dataset(
-        {
-            "U10_MpS": (["latitude", "longitude"], U10_MpS),
-            "V10_MpS": (["latitude", "longitude"], V10_MpS)
-        },
-        coords={
-            "latitude": latitudes,
-            "longitude": longitudes
-        }
-    )
-
-# Add metadata to the dataset
-    data.U10_MpS.attrs['units'] = 'm/s'
-    data.U10_MpS.attrs['long_name'] = 'Eastward Wind Component at 10 Meters'
-    data.V10_MpS.attrs['units'] = 'm/s'
-    data.V10_MpS.attrs['long_name'] = 'Northward Wind Component at 10 Meters'
-    data.attrs['description'] = 'Wind speed and direction data at 10 meters'
-    data.attrs['title'] = 'Sample NetCDF for Wind Data'
-
-# Save the dataset to a NetCDF file
-    file_path = 'Sample_Wind_Data.nc'
-    data.to_netcdf(path=file_path)
-
-
-
-def for_windspeed(ncfile,timestep):
-    DS = xr.open_dataset(ncfile)
-    u_da = DS.U10_MpS
-    u_da2=u_da.isel(TSTEP=[timestep])
-    u_pdata=u_da2.values
-    u_pdata1=u_pdata[0,0,:,:]
-    v_da = DS.V10_MpS
-    v_da2=v_da.isel(TSTEP=[timestep])
-    v_pdata=v_da2.values
-    v_pdata1=v_pdata[0,0,:,:]    
-    u_pdata2=u_pdata1* units.meter / units.second
-    v_pdata2=v_pdata1* units.meter / units.second
-    windspeed=metpcalc.wind_speed(u_pdata2,v_pdata2)
-    nctime=DS.time[timestep].values
-    return windspeed,nctime
-
-
-def for_windmap(ncfile,timestep):
-    DS = xr.open_dataset(ncfile)
-    u_da = DS.U10_MpS
-    u_da2=u_da.isel(TSTEP=[timestep])
-    u_pdata=u_da2.values
-    u_pdata1=u_pdata[0,0,:,:]
-    v_da = DS.V10_MpS
-    v_da2=v_da.isel(TSTEP=[timestep])
-    v_pdata=v_da2.values
-    v_pdata1=v_pdata[0,0,:,:]    
-    nctime=DS.time[timestep].values
-    ncx=DS['longitude'].values
-    ncy=DS['latitude'].values
-    return ncx,ncy,u_pdata1,v_pdata1,nctime
-
-
-
-
+    
+    
 def colorcoder(colorlist):
+    """
+    Converts sequence or string of colour code to tupple
+
+    Parameters
+    ----------
+    colorlist : list
+        list of colourcode in form of string or sequence
+    
+    Returns
+    
+    RGB tuple of three floats from 0-1
+
+    """
     clconv = matplotlib.colors.ColorConverter().to_rgb
     color_code=[clconv(color) for color in colorlist]
     return color_code
 
 
 def colorize(array, cmap):
-    normed_data = (array - array.min()) / (array.max() - array.min())
+    """
+    Helper function for normalizing colourmap 
+
+    Parameters
+    ----------
+    array : numpy array
+        
+    cmap: maptlotlib colour map
+    
+    Returns
+    -------
+    Normalized color map 
+    """
+    #normed_data = (array - array.min()) / (array.max() - array.min())
     cm = plt.cm.get_cmap(cmap)
-    return cm(normed_data)
+    return cm(array)
 
 
 def colorbar_index(ncolors, cmap, labels=None, **kwargs):
     """
-    This is a convenience function to stop you making off-by-one errors
-    Takes a standard colour ramp, and discretizes it,
-    then draws a colour bar with correctly aligned labels
+    Colorbar helper functions, which create legends in the plot
+    
+
+    Parameters
+    ----------
+    ncolors: int
+              number of colors in legend
+    cmap: matplotlib color map obj
+      
+    
+    Returns
+    -------
+    returns colorbar object to be used as legend in the plot
     """
     #cmap = cmap_discretize(cmap, ncolors)
     mappable = cm.ScalarMappable(cmap=cmap)
@@ -219,50 +122,97 @@ def colorbar_index(ncolors, cmap, labels=None, **kwargs):
     return colorbar
 
 
-def forecast_extent(plot_extent): 
-    geo_fe= Polygon([[plot_extent['s'],plot_extent['w']], [plot_extent['e'],plot_extent['s']], [plot_extent['e'],plot_extent['n']], [plot_extent['w'],plot_extent['n']]])
-    return geo_fe
+
+def custom_legend_placer(cf_ncdata,da_plt,dataclasslist,dataclasslabel,legendpost,colorlist,legendtitle):
+    """
+    Helper function to place the legend and runs internal colour bar functions
+
+    Parameters
+    ----------
+    cf_ncdata : int
+        Description of arg1
+    da_plt: matplotlib plt axes
+
+    dataclasslist: legend cutoff value list
+
+    dataclasslabel: legend label list
+
+    legendpost: legend position descrption dict
+    
+    colorlist: list of colour list for legend and map ploting
+    
+    legendtitle: legend title
+
+    Returns
+    -------
+    none
+
+    """
+    color_code=colorcoder(colorlist)
+    legendpos=da_plt.axes([legendpost['x'],legendpost['y'],legendpost['width'],legendpost['height']],frame_on=False,zorder=10) 
+    colormap = LinearSegmentedColormap.from_list("my_colormap",color_code, N=len(dataclasslist), gamma=1.0)
+    class_pdata = np.digitize(cf_ncdata, dataclasslist)
+    colored_data = colorize(class_pdata, colormap)
+    cb = colorbar_index(ncolors=len(dataclasslabel), cmap=colormap,  labels=dataclasslabel,cax = legendpos);cb.ax.tick_params(labelsize=8)
+    cb.ax.set_title(legendtitle,fontsize=8,fontweight='bold') 
+    return colored_data, colormap
 
 
-
-def shapefile_patches(plotsize,mainmappost,cen_forecast_extent,plot_extent,shapefile):
-    fig = plt.figure()
-    fig.set_size_inches(plotsize['width'],plotsize['height'])
-    mainmap=fig.add_axes([mainmappost['x'],mainmappost['y'],mainmappost['width'],mainmappost['height']],zorder=10) 
-    #epsg=24374,lon_0=19.17,lat_0=72.98
-    amap = Basemap(epsg=4326,lon_0=cen_forecast_extent.x,lat_0=cen_forecast_extent.y,ellps = 'WGS84',llcrnrlon=plot_extent['w'],\
-               llcrnrlat=plot_extent['s'],urcrnrlon=plot_extent['e'],urcrnrlat=plot_extent['n'],lat_ts=0,resolution='i',area_thresh=1000.,suppress_ticks=False, ax=mainmap)
-    shppath=filepath_provider(shapefile)
-    os.chdir(shppath)
-    shapflname=path_leaf(shapefile).split('.')[0]
-    amap.readshapefile(shapflname,shapflname,color='none',zorder=2)
-    df_map = pd.DataFrame({'geometry': [Polygon(xy) for xy in amap.India_state_code]})
-    df_map['patches'] = df_map['geometry'].map(lambda x: PolygonPatch(x,facecolor='none', 
-            edgecolor='white', lw=.5, alpha=1., zorder=4)) 
-    return fig, df_map
+def fixed_locator_lon(x_min,x_max):
+    no_of_grid=round(x_max-x_min)
+    step=round(x_max-x_min)/no_of_grid
+    locators=np.arange(x_min,x_max,step)
+    return locators
 
 
-def textplacer(axname,xpos,ypos,width,height,textstring):
-    axname=fig.add_axes([xpos,ypos,width,height], frame_on=False,zorder=0) 
-    axname.xaxis.set_ticks_position('none')
-    axname.yaxis.set_ticks_position('none') 
-    axname.set_xticklabels('')
-    axname.set_yticklabels('')
-    plt.text(0.8, 0.5,textstring, horizontalalignment='right',fontsize=30,fontweight='bold',color='k', verticalalignment='center', transform =cityname.transAxes)
+def add_gridlines(mainmap,x_min,y_min,x_max,y_max):
+    gl = mainmap.gridlines(crs=ccrs.PlateCarree(), draw_labels=True,
+                  linewidth=0.2, color='gray', alpha=0.5, linestyle='--')
+    gl.ylabels_left = False
+    #gl.xlabels_bottom = False
+    gl.xlabels_top = False
+    #locators=fixed_locator_lon(x_min,x_max)
+    gl.xlocator = mticker.FixedLocator([x_min+1,x_max-1])
+    #gl.ylocator = mticker.FixedLocator([y_min-1,y_max+1])
+    gl.xformatter = LONGITUDE_FORMATTER
+    gl.yformatter = LATITUDE_FORMATTER
+    gl.xlabel_style = {'size': 6}
+    gl.ylabel_style = {'size': 6}
 
+def logoplacer(logofile,mainmap,pos_var):
+    """
+    Places logo over a plot.
 
-def textplacer(axname,fig,xpos,ypos,width,height,textstring,fontsize,horizontalalignment):
-    axname=fig.add_axes([xpos,ypos,width,height], frame_on=False,zorder=0) 
-    axname.xaxis.set_ticks_position('none')
-    axname.yaxis.set_ticks_position('none') 
-    axname.set_xticklabels('')
-    axname.set_yticklabels('')
-    plt.text(0.5, 0.5,textstring, horizontalalignment=horizontalalignment,fontsize=fontsize,fontweight='bold',color='k', verticalalignment='center', transform =axname.transAxes)
+    Parameters
+    ----------
+    logofile : file path
+        path of the logo
+    da_plt : variable
+        matplotlib.pyplot as plt , da_plt = plt
+    pos_var : dict
+        containing x,y,width,height        
 
+    
+    Returns
+    -------
+    
+        Description of return value
 
-def logoplacer(logofile,fig,xpos,ypos,width,height):
+    """
+    # #xpos,ypos,width,height=pos_var['x'],pos_var['y'],pos_var['width'],pos_var['height']
+    # logo = inset_axes(mainmap,
+    #                 width=1,                     # inch
+    #                 height=1,                    # inch
+    #                 bbox_transform=mainmap.transAxes, # relative axes coordinates
+    #                 bbox_to_anchor=(0.5,0.5),    # relative axes coordinates
+    #                 loc=3)    
+    logo= mainmap.inset_axes([0.84, -0.05, 0.15, 0.15],frame_on=False,fc='None',alpha=0)
+    #logo = inset_axes(da_plt, width="30%",  height="30%")
+    #axins.imshow(Z2, extent=extent, interpolation="nearest",
+    #      origin="lower")
     logofile = plt.imread(logofile)
-    logo=fig.add_axes([xpos,ypos,width,height], frame_on=False,zorder=0) 
+    #logo=da_plt.add_axes([xpos,ypos,width,height], frame_on=False,zorder=0) 
+    #logo=fig.add_axes([xpos,ypos,width,height], frame_on=False,zorder=0) 
     logo.xaxis.set_ticks_position('none')
     logo.yaxis.set_ticks_position('none') 
     logo.set_xticklabels('')
@@ -270,57 +220,73 @@ def logoplacer(logofile,fig,xpos,ypos,width,height):
     logo.imshow(logofile)
 
 
-def udlegendcreator(cf_ncdata,dataclasslist,fig,legendpost,colorlist,legendlabel,legendtitle):
-    color_code=colorcoder(colorlist)
-    #dataclasslist.insert(0, cf_ncdata.min())
-    #dataclasslist.insert(len(dataclasslist), np.inf)
-    legendpos=fig.add_axes([legendpost['x'],legendpost['y'],legendpost['width'],legendpost['height']],zorder=10) 
-    colormap = LinearSegmentedColormap.from_list("my_colormap",color_code, N=len(dataclasslist), gamma=1.0)
-    class_pdata = np.digitize(cf_ncdata, dataclasslist)
-    colored_data = colorize(class_pdata, colormap)
-    #jenks_labels=dataclasslist[1:-1]
-    cb = colorbar_index(ncolors=len(legendlabel), cmap=colormap,  labels=legendlabel,cax = legendpos);cb.ax.tick_params(labelsize=8)
-    cb.ax.set_title(legendtitle,fontsize=8,fontweight='bold') 
-    return dataclasslist,colormap 
+def get_windspeed(u_pdata1,v_pdata1):
+    """
+    from : https://github.com/blaylockbk/Ute_WRF/blob/master/functions/wind_calcs.py
+    Calculates the wind speed from the u and v wind components
+    Inputs:
+      U = west/east direction (wind from the west is positive, from the east is negative)
+      V = south/noth direction (wind from the south is positive, from the north is negative)
+    """
+    U=u_pdata1
+    V=v_pdata1
+    WSPD = np.sqrt(np.square(U)+np.square(V))
+    return WSPD
 
 
 
-def mapploter(plot_extent,fig,cf_ncfile,timestep,plotsize,mainmappost,df_map,dataclasslist,legendpost,colorlist,legendlabel,variable,legendtitle):
-    if variable=='surface temperature':
-       cf_ncdata,nctime=for_tempextract(cf_ncfile,timestep)
-    if variable=='wind speed':
-       cf_ncdata,nctime=for_windspeed(cf_ncfile,timestep)
-    fig.set_size_inches(plotsize['width'],plotsize['height'])
-    classif,colormap=udlegendcreator(cf_ncdata,dataclasslist,fig,legendpost,colorlist,legendlabel,legendtitle)
-    class_pdata = np.digitize(cf_ncdata, classif)
-    colored_data = colorize(class_pdata, colormap)
-    mainmap=fig.add_axes([mainmappost['x'],mainmappost['y'],mainmappost['width'],mainmappost['height']],zorder=10)
-    mainmap.set_xlabel('Longitude', fontsize=14,fontweight='bold')
-    mainmap.set_ylabel('Latitude', fontsize=14,fontweight='bold') 
-    concmap=mainmap.imshow(np.flipud(colored_data), cmap=colormap,extent=(plot_extent['w'], plot_extent['e'], plot_extent['s'],plot_extent['n']),alpha=1,interpolation='bilinear')
-    pc = PatchCollection(df_map['patches'], match_original=True)
-    mainmap.add_collection(pc)
-    return concmap, nctime
-    #fig.savefig(outputpath+'{0}.png'.format(str(timestep)), transparent=False)
+def wm_ws_map(params,windspeed,u_pdata1,v_pdata1,vds):
+    """
+    Use u and v vector to plot the wind stream line and 
+    overlay with wind speed plot. There is a shape file
+    is overlayed for to give int boundary 
 
+    Parameters
+    ----------
+    params : parameter objects
+        Object variable for folder name, file name etc
+    windspeed : Numpy 2D array
+        Wind speed generated from u and v compute, fliped to match the canvas
+    u_pdata1 : Numpy 2D array
+        Wind u vector, fliped to match the canvas
+    v_pdata1 : TYPE
+        Wind u vector, fliped to match the canvas
+    vds : TYPE
+        rasterio object to get extent and other maping descriptions
 
-def windmap_ploter(plot_extent,fig,cf_ncfile,timestep,plotsize,mainmappost,df_map,dataclasslist,legendpost,colorlist,legendlabel,variable,legendtitle):
-    cf_ncdata,nctime=for_windspeed(cf_ncfile,timestep)
-    fig.set_size_inches(plotsize['width'],plotsize['height'])
-    classif,colormap=udlegendcreator(cf_ncdata,dataclasslist,fig,legendpost,colorlist,legendlabel,legendtitle)
-    class_pdata = np.digitize(cf_ncdata, classif)
-    colored_data = colorize(class_pdata, colormap)
-    mainmap=fig.add_axes([mainmappost['x'],mainmappost['y'],mainmappost['width'],mainmappost['height']],zorder=10)
-    mainmap.set_xlabel('Longitude', fontsize=14,fontweight='bold')
-    mainmap.set_ylabel('Latitude', fontsize=14,fontweight='bold') 
-    concmap=mainmap.imshow(np.flipud(colored_data), cmap=colormap,extent=(plot_extent['w'], plot_extent['e'], plot_extent['s'],plot_extent['n']),alpha=1,interpolation='bilinear')
-    pc = PatchCollection(df_map['patches'], match_original=True)
-    mainmap.add_collection(pc)
-    variable='wind direction'
-    ncx,ncy,u_pdata1,v_pdata1,nctime=for_windmap(cf_ncfile,timestep)    
-    #lengths = []
-    #colors = []
-    #lines = []
+    Returns
+    -------
+    Generate map png file
+
+    """
+    x_min,x_max,y_min,y_max=vds.bounds[0],vds.bounds[2],vds.bounds[1],vds.bounds[3]
+    mx = np.linspace(x_min, x_max, vds.width)
+    my = np.linspace(y_min, y_max, vds.height)
+    ncx, ncy = np.meshgrid(mx, my)
+    print('do_windmap')
+    #legendpost={'x':0.01,'y':0.03,'width':0.97,'height':0.03}
+    dataclasslist=[4, 8, 14, 18, 22, 26]
+    dataclasslabel=[4, 8, 14, 18, 22, 26]
+    colorlist=['#20b2aa','#9acd32','#ffd700','#ff8c00','#ff0000','#800000','#330000']
+    da_plt=plt
+    da_plt.figure(figsize=(params.plotsize['width'],params.plotsize['height']))
+    mainmap=da_plt.axes((params.mainmappost['x'],params.mainmappost['y'],params.mainmappost['width'],params.mainmappost['height']), projection=ccrs.PlateCarree(),zorder=10)
+    #bg_shapes = list(shpreader.Reader(params.background_shpfile).geometries())
+    json_file = "../static/ea_ghcf_simple.json"
+    with open(json_file, "r") as f:
+        geom = json.load(f)
+    gdf = gp.GeoDataFrame.from_features(geom)
+    ax = plt.axes(projection=ccrs.PlateCarree())
+    ax.add_geometries(
+        gdf["geometry"], crs=ccrs.PlateCarree(), facecolor="none", edgecolor="black"
+    )
+    add_gridlines(mainmap,x_min,y_min,x_max,y_max)
+    mainmap.add_geometries(bg_shapes, ccrs.PlateCarree(),
+    edgecolor='black', facecolor='none', alpha=1)
+    formatted_dataclasslabel = [ '%.0f' % elem for elem in dataclasslabel ]
+    colored_data, colormap=custom_legend_placer(windspeed,da_plt,dataclasslist,formatted_dataclasslabel,params.legendpost,colorlist,'Knot(nm/hr)')
+    mainmap.imshow(colored_data, cmap=colormap,extent=(x_min,x_max,y_min,y_max))
+    #mainmap.imshow(windspeed)
     s = Streamlines(ncx, ncy, u_pdata1, v_pdata1)
     for streamline in s.streamlines:
         x, y = streamline
@@ -339,4 +305,16 @@ def windmap_ploter(plot_extent,fig,cf_ncfile,timestep,plotsize,mainmappost,df_ma
         #colors.append(C)
         #lines.append(line)
         mainmap.add_collection(line)
-    return concmap, nctime
+    textplacer('firstitle',da_plt,params.pos_firstitle,params.firstitle,10,'center')
+    datefmt=params.startdate
+    run=params.run
+    textplacer('vartitle',da_plt,params.pos_vartitle,f'Wind speed in Knot(nm/hr), based on GFS {datefmt} run {run}',10,'center')
+    textplacer('thirdtitle',da_plt,params.pos_thirdtitle,'On '+params.istdatefmt+ ' IST',10,'center')
+    logoplacer(params.logofile,da_plt,params.logopos)
+    output_png_file=params.localpath+'{}.png'.format(params.utcdatefmt)
+    da_plt.savefig(output_png_file, transparent=False)
+    da_plt.close()
+    return output_png_file
+
+
+
